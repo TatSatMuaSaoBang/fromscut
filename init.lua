@@ -9,6 +9,7 @@ local keymap_finder = require('keymap_finder')
 local testcase = require('testcase')  -- Add this line
 local hop = require('hop')
 local keymap_finder = require('keymap_finder')
+local buffer_mask = require('buffer_mask')
 
 -- Basic settings
 vim.opt.expandtab = true
@@ -45,6 +46,9 @@ vim.g.omni_sql_no_default_maps = 1
 vim.g.netrw_winsize = 24
 vim.opt.scrolloff = 8
 vim.opt.sidescrolloff = 8
+
+-- Add this near the top of your config, in the "Basic settings" section
+vim.opt.laststatus = 3  -- Global statusline (only one at bottom)
 
 vim.api.nvim_create_autocmd("BufReadPost", {
   callback = function()
@@ -312,60 +316,73 @@ vim.keymap.set('n', '<C-g>s', function() require('testcase').start() end, { nore
 vim.keymap.set('n', '<C-g>e', function() require('testcase').exit() end, { noremap = true, silent = true })
 
 -- Hop plugin - jump to words
-vim.keymap.set('n', '<C-h><C-h>', function() require('hop').hop_line() end, { noremap = true, silent = true })
-vim.keymap.set('v', '<C-h><C-h>', function() require('hop').hop_visual() end, { noremap = true, silent = true })
+vim.keymap.set('n', '<C-o><C-o>', function() require('hop').hop_line() end, { noremap = true, silent = true })
+vim.keymap.set('v', '<C-o><C-o>', function() require('hop').hop_visual() end, { noremap = true, silent = true })
 
--- Custom Statusline with MORE COLORS! 🌈
+-- Bufferlines mask keybuttons.
+vim.keymap.set('n', '<leader>bd', function() 
+  require('buffer_mask').close_buffer() 
+end, { noremap = true, silent = true, desc = 'Close buffer with mask' })
+
+vim.keymap.set('n', '<leader>bb', function() 
+  require('buffer_mask').switch_buffer() 
+end, { noremap = true, silent = true, desc = 'Switch buffer with mask' })
+
+-- Modern statusline with arrow separators
 local function get_mode_info()
   local mode_map = {
-    ['n'] = { name = 'NORMAL', emoji = '😎', color = '%#StatusNormal#' },
-    ['i'] = { name = 'INSERT', emoji = '✍️', color = '%#StatusInsert#' },
-    ['v'] = { name = 'VISUAL', emoji = '👀', color = '%#StatusVisual#' },
-    ['V'] = { name = 'V-LINE', emoji = '📝', color = '%#StatusVisual#' },
-    [''] = { name = 'V-BLOCK', emoji = '🔲', color = '%#StatusVisual#' },
-    ['c'] = { name = 'COMMAND', emoji = '⚡', color = '%#StatusCommand#' },
-    ['r'] = { name = 'REPLACE', emoji = '🔄', color = '%#StatusReplace#' },
-    ['t'] = { name = 'TERMINAL', emoji = '💻', color = '%#StatusTerminal#' },
+    ['n'] = { name = 'NORMAL', color = '%#StatusNormal#' },
+    ['i'] = { name = 'INSERT', color = '%#StatusInsert#' },
+    ['v'] = { name = 'VISUAL', color = '%#StatusVisual#' },
+    ['V'] = { name = 'V-LINE', color = '%#StatusVisual#' },
+    [''] = { name = 'V-BLOCK', color = '%#StatusVisual#' },
+    ['c'] = { name = 'COMMAND', color = '%#StatusCommand#' },
+    ['r'] = { name = 'REPLACE', color = '%#StatusReplace#' },
+    ['t'] = { name = 'TERMINAL', color = '%#StatusTerminal#' },
   }
   
   local mode = vim.api.nvim_get_mode().mode
-  return mode_map[mode] or { name = mode:upper(), emoji = '🤔', color = '%#StatusNormal#' }
+  return mode_map[mode] or { name = mode:upper(), color = '%#StatusNormal#' }
 end
 
 local function get_file_icon()
   local ft_icons = {
-    lua = '🌙',
-    python = '🐍',
-    javascript = '📜',
-    typescript = '💙',
-    java = '☕',
-    cpp = '⚙️',
-    c = '🔧',
-    rust = '🦀',
-    go = '🐹',
-    html = '🌐',
-    css = '🎨',
-    json = '📋',
-    markdown = '📝',
-    vim = '💚',
-    sh = '🐚',
+    lua = 'LUA',
+    python = 'PY',
+    javascript = 'JS',
+    typescript = 'TS',
+    java = 'JAVA',
+    cpp = 'C++',
+    c = 'C',
+    rust = 'RS',
+    go = 'GO',
+    html = 'HTML',
+    css = 'CSS',
+    json = 'JSON',
+    markdown = 'MD',
+    vim = 'VIM',
+    sh = 'SH',
+    netrw = 'DIR',
   }
   
   local ft = vim.bo.filetype
-  return ft_icons[ft] or '📄'
+  return ft_icons[ft] or 'TXT'
 end
 
 local function get_indent_info()
   if vim.bo.expandtab then
-    return 'Spaces: ' .. vim.bo.shiftwidth
+    return 'SP:' .. vim.bo.shiftwidth
   else
-    return 'Tabs: ' .. vim.bo.tabstop
+    return 'TB:' .. vim.bo.tabstop
   end
 end
 
 local function word_count()
+  if vim.bo.filetype == 'netrw' or vim.bo.buftype == 'terminal' then
+    return ''
+  end
   local words = vim.fn.wordcount()
-  return words.words .. ' words'
+  return words.words .. 'W'
 end
 
 local function get_time()
@@ -376,36 +393,50 @@ local function get_position()
   local line = vim.fn.line('.')
   local col = vim.fn.col('.')
   local total = vim.fn.line('$')
-  return string.format('%d:%d/%d', line, col, total)
+  local percent = math.floor((line / total) * 100)
+  return string.format('%d:%d %d%%%%', line, col, percent)
 end
 
 function _G.custom_statusline()
   local mode_info = get_mode_info()
-  local filename = vim.fn.expand('%:t')
+  local bufnr = vim.api.nvim_win_get_buf(vim.g.statusline_winid or 0)
+  local filetype = vim.bo[bufnr].filetype
+  
+  -- Special handling for netrw
+  if filetype == 'netrw' then
+    local path = vim.fn.fnamemodify(vim.fn.getcwd(), ':~')
+    return string.format(
+      '%s %s %%#StatusArrow1#>%%#StatusFile# FILE EXPLORER %%#StatusArrow2#>%%#StatusLang# %s %%#StatusLineFill#%%=%%#StatusTime# %s ',
+      mode_info.color,
+      mode_info.name,
+      path,
+      get_time()
+    )
+  end
+  
+  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
   if filename == '' then filename = '[No Name]' end
   
-  local modified = vim.bo.modified and ' [+]' or ''
-  local readonly = vim.bo.readonly and ' 🔒' or ''
-  local filetype = vim.bo.filetype ~= '' and vim.bo.filetype or 'text'
+  local modified = vim.bo[bufnr].modified and '+' or ''
+  local readonly = vim.bo[bufnr].readonly and 'RO' or ''
+  local flags = (modified ~= '' or readonly ~= '') and ' [' .. modified .. readonly .. ']' or ''
   
-  -- Colorful left side
+  -- Left side with arrows
   local left = string.format(
-    '%s %s %s %%#StatusSep1#│%%#StatusFile# %s %s%s%s %%#StatusSep2#│%%#StatusLang# %s ',
+    '%s %s %%#StatusArrow1#>%%#StatusFile# %s %%#StatusArrow2#>%%#StatusLang# %s%s ',
     mode_info.color,
-    mode_info.emoji,
     mode_info.name,
     get_file_icon(),
     filename,
-    modified,
-    readonly,
-    filetype
+    flags
   )
   
-  -- Colorful right side
+  -- Right side with arrows
+  local wc = word_count()
   local right = string.format(
-    '%%#StatusIndent#│ %s %%#StatusWords#│ %s %%#StatusTime#│ 🕐 %s %%#StatusPos#│ 📍 %s ',
+    '%%#StatusIndent#%s %%#StatusArrowR1#<%%#StatusWords#%s%%#StatusArrowR2#<%%#StatusTime#%s %%#StatusArrowR3#<%%#StatusPos# %s ',
     get_indent_info(),
-    word_count(),
+    wc ~= '' and ' ' .. wc .. ' ' or ' ',
     get_time(),
     get_position()
   )
@@ -416,31 +447,36 @@ end
 -- Set custom statusline
 vim.opt.statusline = '%!v:lua.custom_statusline()'
 
--- Define COLORFUL highlight groups for different modes
-vim.api.nvim_set_hl(0, 'StatusNormal', { fg = '#1a1b26', bg = '#7aa2f7', bold = true })    -- Blue
-vim.api.nvim_set_hl(0, 'StatusInsert', { fg = '#1a1b26', bg = '#9ece6a', bold = true })    -- Green
-vim.api.nvim_set_hl(0, 'StatusVisual', { fg = '#1a1b26', bg = '#bb9af7', bold = true })    -- Purple
-vim.api.nvim_set_hl(0, 'StatusCommand', { fg = '#1a1b26', bg = '#e0af68', bold = true })   -- Yellow
-vim.api.nvim_set_hl(0, 'StatusReplace', { fg = '#1a1b26', bg = '#f7768e', bold = true })   -- Red
-vim.api.nvim_set_hl(0, 'StatusTerminal', { fg = '#1a1b26', bg = '#73daca', bold = true })  -- Cyan
+-- Define modern highlight groups
+vim.api.nvim_set_hl(0, 'StatusNormal', { fg = '#1a1b26', bg = '#7aa2f7', bold = true })
+vim.api.nvim_set_hl(0, 'StatusInsert', { fg = '#1a1b26', bg = '#9ece6a', bold = true })
+vim.api.nvim_set_hl(0, 'StatusVisual', { fg = '#1a1b26', bg = '#bb9af7', bold = true })
+vim.api.nvim_set_hl(0, 'StatusCommand', { fg = '#1a1b26', bg = '#e0af68', bold = true })
+vim.api.nvim_set_hl(0, 'StatusReplace', { fg = '#1a1b26', bg = '#f7768e', bold = true })
+vim.api.nvim_set_hl(0, 'StatusTerminal', { fg = '#1a1b26', bg = '#73daca', bold = true })
 
--- Colorful sections
-vim.api.nvim_set_hl(0, 'StatusFile', { fg = '#ffffff', bg = '#414868', bold = false })     -- Gray-blue
-vim.api.nvim_set_hl(0, 'StatusLang', { fg = '#ffffff', bg = '#565f89', bold = false })     -- Lighter gray
-vim.api.nvim_set_hl(0, 'StatusIndent', { fg = '#1a1b26', bg = '#ff9e64', bold = false })   -- Orange
-vim.api.nvim_set_hl(0, 'StatusWords', { fg = '#1a1b26', bg = '#2ac3de', bold = false })    -- Bright cyan
-vim.api.nvim_set_hl(0, 'StatusTime', { fg = '#1a1b26', bg = '#c0caf5', bold = false })     -- Light blue
-vim.api.nvim_set_hl(0, 'StatusPos', { fg = '#1a1b26', bg = '#bb9af7', bold = false })      -- Purple
+-- Sections with darker shades
+vim.api.nvim_set_hl(0, 'StatusFile', { fg = '#c0caf5', bg = '#2a2f41', bold = false })
+vim.api.nvim_set_hl(0, 'StatusLang', { fg = '#a9b1d6', bg = '#24283b', bold = false })
+vim.api.nvim_set_hl(0, 'StatusIndent', { fg = '#ff9e64', bg = '#24283b', bold = false })
+vim.api.nvim_set_hl(0, 'StatusWords', { fg = '#7dcfff', bg = '#2a2f41', bold = false })
+vim.api.nvim_set_hl(0, 'StatusTime', { fg = '#bb9af7', bg = '#24283b', bold = false })
+vim.api.nvim_set_hl(0, 'StatusPos', { fg = '#c0caf5', bg = '#2a2f41', bold = true })
 
--- Separators
-vim.api.nvim_set_hl(0, 'StatusSep1', { fg = '#7aa2f7', bg = '#414868' })
-vim.api.nvim_set_hl(0, 'StatusSep2', { fg = '#7aa2f7', bg = '#565f89' })
+-- Arrow separators (left side)
+vim.api.nvim_set_hl(0, 'StatusArrow1', { fg = '#7aa2f7', bg = '#2a2f41', bold = true })
+vim.api.nvim_set_hl(0, 'StatusArrow2', { fg = '#2a2f41', bg = '#24283b', bold = true })
+
+-- Arrow separators (right side)
+vim.api.nvim_set_hl(0, 'StatusArrowR1', { fg = '#2a2f41', bg = '#24283b', bold = true })
+vim.api.nvim_set_hl(0, 'StatusArrowR2', { fg = '#24283b', bg = '#24283b', bold = true })
+vim.api.nvim_set_hl(0, 'StatusArrowR3', { fg = '#2a2f41', bg = '#24283b', bold = true })
 
 -- Fill area
-vim.api.nvim_set_hl(0, 'StatusLineFill', { fg = '#c0caf5', bg = '#1f2335' })
+vim.api.nvim_set_hl(0, 'StatusLineFill', { fg = '#565f89', bg = '#1f2335' })
 
--- Update statusline when mode changes
-vim.api.nvim_create_autocmd('ModeChanged', {
+-- Update statusline efficiently
+vim.api.nvim_create_autocmd({ 'ModeChanged', 'BufEnter', 'WinEnter' }, {
   pattern = '*',
   callback = function()
     vim.cmd('redrawstatus')
@@ -451,6 +487,3 @@ vim.api.nvim_create_autocmd('ModeChanged', {
 vim.fn.timer_start(60000, function()
   vim.cmd('redrawstatus')
 end, { ['repeat'] = -1 })
-
--- when pressing control + b + d. it will show up mask number in bufferline (which will disappeared if we press escape or done the command), press the mask number and we will close that bufferline, but if we press control + b + b then it also will show up mask number and disappeared if we done the command or press escape. but this time when press the mask number, we will move into that bufferline.
--- also moving between window become more smoother, and also, there can only be one status bar, it will not appear when opening netree and will switch to other status when we on other files

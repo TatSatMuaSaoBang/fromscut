@@ -1,58 +1,61 @@
 -- autopairs.lua
--- Place this file in your lua/ directory
-
 local M = {}
 
--- Asymmetric pairs (different open/close)
 local asymmetric_pairs = {
   ['('] = ')',
   ['['] = ']',
   ['{'] = '}',
 }
 
--- Symmetric pairs (same char for open/close)
 local symmetric_pairs = { '"', "'", '`' }
 
--- Check if we're inside a string or comment
-local function in_string_or_comment()
-  local synID = vim.fn.synID(vim.fn.line('.'), vim.fn.col('.'), 1)
-  local synName = vim.fn.synIDattr(synID, 'name'):lower()
-  return synName:match('string') or synName:match('comment')
+-- Check if cursor is at end of line or followed by whitespace/closing bracket
+local function can_autopair()
+  local col = vim.fn.col('.')
+  local line = vim.fn.getline('.')
+  local next_char = line:sub(col, col)
+  
+  -- Allow pairing at end of line or before whitespace/brackets
+  return next_char == '' or next_char:match('[%s%)%]%}]')
 end
 
--- Handle asymmetric opening bracket
+-- Insert asymmetric pair with cursor positioning
 local function insert_asymmetric_pair(open_char)
+  if not can_autopair() then
+    return open_char
+  end
+  
   local close_char = asymmetric_pairs[open_char]
   return open_char .. close_char .. '<Left>'
 end
 
--- Handle symmetric pairs (quotes)
+-- Handle symmetric pairs intelligently
 local function handle_symmetric_pair(char)
   local col = vim.fn.col('.')
   local line = vim.fn.getline('.')
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
-  -- If next char is the same quote, skip over it
+  -- Skip over matching closing quote
   if next_char == char then
     return '<Right>'
   end
   
-  -- If previous char is alphanumeric or the same quote, just insert one
+  -- Don't pair after alphanumeric or same quote
   if prev_char:match('[%w_]') or prev_char == char then
     return char
   end
   
-  -- If next char is alphanumeric, just insert one (don't pair)
+  -- Don't pair before alphanumeric (unless at start of word)
   if next_char:match('[%w_]') then
     return char
   end
   
-  -- Otherwise, insert pair
+  -- Pair the quote
   return char .. char .. '<Left>'
 end
 
--- Handle closing bracket (skip if next char is the same)
+-- Skip over closing bracket or insert it
 local function skip_or_insert(close_char)
   local col = vim.fn.col('.')
   local line = vim.fn.getline('.')
@@ -60,24 +63,23 @@ local function skip_or_insert(close_char)
   
   if next_char == close_char then
     return '<Right>'
-  else
-    return close_char
   end
+  return close_char
 end
 
--- Handle backspace (delete pair if next char is closing bracket)
+-- Smart backspace: delete pairs together
 local function smart_backspace()
   local col = vim.fn.col('.')
   local line = vim.fn.getline('.')
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
-  -- Check asymmetric pairs
+  -- Delete asymmetric pairs
   if asymmetric_pairs[prev_char] == next_char then
     return '<BS><Del>'
   end
   
-  -- Check symmetric pairs
+  -- Delete symmetric pairs
   for _, char in ipairs(symmetric_pairs) do
     if prev_char == char and next_char == char then
       return '<BS><Del>'
@@ -87,23 +89,55 @@ local function smart_backspace()
   return '<BS>'
 end
 
--- Handle Enter key (create pair on new lines for brackets)
+-- Smart enter: expand braces on newline
 local function smart_enter()
+  -- Handle completion menu first
+  if vim.fn.pumvisible() == 1 then
+    return '<C-y>'
+  end
+  
   local col = vim.fn.col('.')
   local line = vim.fn.getline('.')
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
-  -- Check if we're between curly braces
+  -- Expand {} with proper indentation
   if prev_char == '{' and next_char == '}' then
     return '<CR><Esc>O'
-  else
-    return '<CR>'
   end
+  
+  -- Expand [] with proper indentation
+  if prev_char == '[' and next_char == ']' then
+    return '<CR><Esc>O'
+  end
+  
+  -- Expand () with proper indentation
+  if prev_char == '(' and next_char == ')' then
+    return '<CR><Esc>O'
+  end
+  
+  return '<CR>'
+end
+
+-- Smart space: add space inside brackets
+local function smart_space()
+  local col = vim.fn.col('.')
+  local line = vim.fn.getline('.')
+  local prev_char = line:sub(col - 1, col - 1)
+  local next_char = line:sub(col, col)
+  
+  -- Add space padding inside brackets: { | } -> {  |  }
+  if (prev_char == '{' and next_char == '}') or
+     (prev_char == '[' and next_char == ']') or
+     (prev_char == '(' and next_char == ')') then
+    return '<Space><Space><Left>'
+  end
+  
+  return '<Space>'
 end
 
 function M.setup()
-  -- Set up asymmetric pairs (brackets)
+  -- Asymmetric pairs
   for open_char, close_char in pairs(asymmetric_pairs) do
     vim.keymap.set('i', open_char, function()
       return insert_asymmetric_pair(open_char)
@@ -114,7 +148,7 @@ function M.setup()
     end, { expr = true, noremap = true, silent = true })
   end
   
-  -- Set up symmetric pairs (quotes)
+  -- Symmetric pairs
   for _, char in ipairs(symmetric_pairs) do
     vim.keymap.set('i', char, function()
       return handle_symmetric_pair(char)
@@ -126,17 +160,17 @@ function M.setup()
     return smart_backspace()
   end, { expr = true, noremap = true, silent = true })
   
-  -- Smart enter for braces
+  -- Smart enter
   vim.keymap.set('i', '<CR>', function()
-    -- Check if in completion menu first
-    if vim.fn.pumvisible() == 1 then
-      return '<C-y>'
-    else
-      return smart_enter()
-    end
+    return smart_enter()
   end, { expr = true, noremap = true, silent = true })
   
-  print('Autopairs loaded successfully!')
+  -- Smart space (optional, but super useful!)
+  vim.keymap.set('i', '<Space>', function()
+    return smart_space()
+  end, { expr = true, noremap = true, silent = true })
+  
+  print('✨ Autopairs loaded!')
 end
 
 return M
