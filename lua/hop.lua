@@ -171,8 +171,9 @@ function M.hop_visual()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
   
-  -- Exit visual mode
-  vim.cmd('normal! ')
+  -- Exit visual mode properly
+  local esc_key = vim.api.nvim_replace_termcodes('<Esc>', true, false, true)
+  vim.api.nvim_feedkeys(esc_key, 'x', false)
   
   if highlight_positions(start_line, end_line) then
     active = true

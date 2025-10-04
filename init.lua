@@ -1,6 +1,9 @@
 -- Load themes
 require('theme').setup()
 
+-- Setup autopairs (call directly)
+require('autopairs').setup()
+
 -- Load homemade plugins
 local keymap_finder = require('keymap_finder')
 local testcase = require('testcase')  -- Add this line
@@ -252,31 +255,6 @@ function ToggleTerminalVertical()
   vim.g.TermWin_V = vim.api.nvim_get_current_win()
 end
 
--- Auto pairs
-local auto_pairs = {
-  ['('] = ')',
-  ['['] = ']',
-  ['{'] = '}',
-  ['"'] = '"',
-  ["'"] = "'",
-}
-
-for open, close in pairs(auto_pairs) do
-  vim.keymap.set("i", open, function()
-    return open .. close .. "<Left>"
-  end, { expr = true, noremap = true })
-  
-  vim.keymap.set("i", close, function()
-    local col = vim.fn.col(".")
-    local line = vim.fn.getline(".")
-    if line:sub(col, col) == close then
-      return "<Right>"
-    else
-      return close
-    end
-  end, { expr = true, noremap = true })
-end
-
 -- Basic keymaps
 map('i', '<CR>', 'pumvisible() ? "<C-y>" : "<CR>"', { expr = true })
 map('i', '<C-BS>', '<C-w>')
@@ -473,3 +451,6 @@ vim.api.nvim_create_autocmd('ModeChanged', {
 vim.fn.timer_start(60000, function()
   vim.cmd('redrawstatus')
 end, { ['repeat'] = -1 })
+
+-- when pressing control + b + d. it will show up mask number in bufferline (which will disappeared if we press escape or done the command), press the mask number and we will close that bufferline, but if we press control + b + b then it also will show up mask number and disappeared if we done the command or press escape. but this time when press the mask number, we will move into that bufferline.
+-- also moving between window become more smoother, and also, there can only be one status bar, it will not appear when opening netree and will switch to other status when we on other files
