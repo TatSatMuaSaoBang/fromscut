@@ -7,8 +7,8 @@
 -- v2 CHANGELOG (this rewrite):
 --   * file_finder.lua REMOVED — Telescope now covers that job (<leader>ff / <leader>fp).
 --     -> delete lua/file_finder.lua from your config, it's no longer required anywhere.
---   * toggleterm.nvim REMOVED — your own terminal toggle functions are kept and
---     upgraded with a new "terminal scoped to current file's folder" mode, so
+--   * toggleterm.nvim REMOVED — your own terminal trequire('mini_syntax').setup()oggle functions are kept and
+--     upgraded with a new "terminal require('mini_syntax').setup()scoped to current file's folder" mode, so
 --     <C-t>, <leader>tt and <leader>tf still work exactly like before, just
 --     powered by your own code instead of the plugin.
 --   * De-duplicated a bunch of copy-pasted keymaps (<C-t>, <C-s>, insert-mode
@@ -88,6 +88,14 @@ opt.laststatus = 3           -- one global statusline (used by lualine)
 opt.undofile = true
 opt.autowrite = true
 
+require('notification').setup({          -- homemade vim.notify replacement
+  timeout   = 3000,
+  position  = "top_right",
+  border    = "rounded",
+  winblend  = 10,
+  min_level = vim.log.levels.INFO,
+})
+
 require("theme").setup()
 
 -- NOTE: your original file had `number = false` (relative-only). This merge
@@ -112,9 +120,15 @@ vim.api.nvim_create_autocmd("BufReadPost", {
 vim.api.nvim_create_autocmd("TextYankPost", {
   pattern = "*",
   callback = function()
-    vim.highlight.on_yank({ higroup = "IncSearch", timeout = 200 })
+    local ok, undo_glow = pcall(require, "undo-glow")
+    if ok then
+      undo_glow.yank()                                    -- animated version
+    else
+      vim.highlight.on_yank({ higroup = "IncSearch", timeout = 200 })
+    end
   end,
 })
+
 
 -------------------------------------------------------------------
 -- 5. CUSTOM TABLINE (buffer_mask.lua hooks into this)
@@ -296,16 +310,25 @@ end
 --     <leader>q is for, and that one asks you to save first.
 -------------------------------------------------------------------
 local function smart_close_all()
-  -- 1. Close every floating window currently open.
+  local notify_ok, notification = pcall(require, "notification")
+
+  -- 1. Close every *real* floating window (notifications don't count as a layer).
   local closed_float = false
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local ok, cfg = pcall(vim.api.nvim_win_get_config, win)
-    if ok and cfg.relative ~= "" then
+    local is_notif = notify_ok and notification.is_notification_win(win)
+    if ok and cfg.relative ~= "" and not is_notif then
       pcall(vim.api.nvim_win_close, win, true)
       closed_float = true
     end
   end
   if closed_float then return end
+
+  -- 1b. Only notifications on screen? Dismiss them instead of closing a split.
+  if notify_ok and notification.count() > 0 then
+    notification.dismiss_all()
+    return
+  end
 
   -- 2. nvim-tree open? Close it.
   local ok_api, tree_api = pcall(require, "nvim-tree.api")
@@ -404,6 +427,10 @@ map("n", "<C-]>", ":vsplit<CR>")
 map("n", "<leader>nh", ":nohlsearch<CR>", { desc = "Clear search highlight" })
 -- NOTE: your original config used <leader>h for clear-highlight. That key now
 -- opens the dashboard (see plugins section below), so clear-highlight moved to <leader>nh.
+
+-- Notification keymaps
+map("n", "<leader>nn", function() require("notification").show_history() end, { desc = "Notification history" })
+map("n", "<leader>nd", function() require("notification").dismiss_all() end, { desc = "Dismiss all notifications" })
 
 -- Finder popup (your custom one)
 map("n", "<leader>fk", ':lua require("keymap_finder").show()<CR>', { desc = "Keymap finder" })
@@ -732,26 +759,25 @@ require("lazy").setup({
       })
     end,
   },
-
+	
   -- Auto-format on save (prettier for html/css/js, black for python)
   {
     "stevearc/conform.nvim",
     event = { "BufWritePre" },
     config = function()
-      require("conform").setup({
+            require("conform").setup({
         formatters_by_ft = {
-          html = { "prettier" },
-          css = { "prettier" },
-          javascript = { "prettier" },
-          javascriptreact = { "prettier" },
-          json = { "prettier" },
           python = { "black" },
+          -- html/css/js/ts/json/yaml/markdown are handled by prettier.nvim
+          -- (through none-ls) via the lsp fallback below — do NOT list prettier
+          -- here too, or every save formats twice.
         },
         format_on_save = {
-          timeout_ms = 1000,
-          lsp_fallback = true,
+          timeout_ms = 1500,
+          lsp_fallback = true,   -- newer conform calls this `lsp_format = "fallback"`
         },
       })
+
 
       vim.keymap.set({ "n", "v" }, "<leader>mf", function()
         require("conform").format({ lsp_fallback = true })
