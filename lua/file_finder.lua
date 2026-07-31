@@ -43,7 +43,12 @@ local function filter_files()
   local term = search_term:lower()
   
   for _, file in ipairs(files) do
-    if file.name:lower():match(term) then
+    -- BUG FIX: term was passed straight to :match(), which treats it as a
+    -- Lua pattern, not literal text. Typing a character with pattern
+    -- meaning (. + * [ ] ( ) % ^ $) could silently match the wrong files or
+    -- throw a pattern error mid-search. find(term, 1, true) forces a plain
+    -- substring search.
+    if file.name:lower():find(term, 1, true) then
       table.insert(filtered, file)
     end
   end
@@ -95,14 +100,24 @@ local function render()
   
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(buf, 'modifiable', false)
-  
-  -- Position cursor on search line at the cursor position (after "Search: " text)
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_set_cursor(win, {2, 10 + #search_term})
-    end
-  end)
+
+  -- PERF NOTE: this used to defer the cursor move with vim.schedule(), which
+  -- pushes it to the next event-loop tick. render() runs synchronously on
+  -- every keystroke here, so deferring the cursor just means it visibly
+  -- lands one tick after the character appears — a small but real stutter
+  -- while typing a search term. Nothing here needs deferring; do it inline.
+  if vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_win_set_cursor(win, {2, 10 + #search_term})
+  end
 end
+
+-- Forward-declared: open_selected() needs to call this before its body is
+-- defined below. It used to be a bare `function close_window()` with no
+-- `local`, which silently leaks it into _G — every other Lua file (and the
+-- global namespace in general) could see and clobber it. Not a lag bug on
+-- its own, but global lookups are slower than local ones and it's a real
+-- footgun in a config where several modules run in the same Lua state.
+local close_window
 
 local function open_selected()
   local display_files = #search_term > 0 and filtered or files
@@ -120,7 +135,7 @@ local function open_selected()
   end
 end
 
-function close_window()
+close_window = function()
   if win and vim.api.nvim_win_is_valid(win) then
     vim.api.nvim_win_close(win, true)
   end

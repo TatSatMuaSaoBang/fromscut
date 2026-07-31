@@ -4,10 +4,30 @@ local namespace = vim.api.nvim_create_namespace('hop_highlight')
 local active = false
 local positions = {}
 
+-- Defined ONCE at module load instead of inside create_virtual_text(), which
+-- used to call nvim_set_hl() for every single matched word position — on a
+-- long line or a big visual selection that's hundreds of redundant calls
+-- every time you invoke hop, causing a visible stutter right when you hit it.
+vim.api.nvim_set_hl(0, 'HopLabel', { fg = '#000000', bg = '#FFFF00', bold = true })
+
 local function clear_highlights()
   vim.api.nvim_buf_clear_namespace(0, namespace, 0, -1)
   positions = {}
   active = false
+end
+
+-- BUG FIX: this used to only run inside the <Esc> handler, so a hop that
+-- ended by pressing a digit (the normal, successful case) or by exhausting
+-- invalid input left the ten digit keymaps — and <Esc> itself — mapped in
+-- the buffer indefinitely. Since the leftover handler checks `active` and
+-- no-ops when false, the practical symptom was silently broken digit keys
+-- in that buffer (e.g. `5dd` doing nothing) until hop was invoked again and
+-- overwrote them. Centralized cleanup here and call it on every exit path.
+local function teardown_input_handler()
+  for i = 0, 9 do
+    pcall(vim.keymap.del, 'n', tostring(i), { buffer = true })
+  end
+  pcall(vim.keymap.del, 'n', '<Esc>', { buffer = true })
 end
 
 local function get_first_letter_positions(start_line, end_line)
@@ -42,9 +62,6 @@ local function get_first_letter_positions(start_line, end_line)
 end
 
 local function create_virtual_text(line, col, number)
-  -- Create highlight group with yellow background
-  vim.api.nvim_set_hl(0, 'HopLabel', { fg = '#000000', bg = '#FFFF00', bold = true })
-  
   -- Place virtual text at the position
   vim.api.nvim_buf_set_extmark(0, namespace, line - 1, col - 1, {
     virt_text = {{ tostring(number), 'HopLabel' }},
@@ -74,6 +91,7 @@ local function hop_to_position(number)
       -- Move cursor to the position
       vim.api.nvim_win_set_cursor(0, {pos.line, pos.col - 1})
       clear_highlights()
+      teardown_input_handler()
       return true
     end
   end
@@ -107,6 +125,7 @@ local function setup_input_handler()
         -- If nothing worked, clear and reset
         input = ""
         clear_highlights()
+        teardown_input_handler()
       elseif target <= max_idx and target > 0 then
         -- Check if this could be a complete number
         local could_be_more = false
@@ -140,16 +159,14 @@ local function setup_input_handler()
   -- Escape to cancel
   vim.keymap.set('n', '<Esc>', function()
     clear_highlights()
-    -- Clean up number keymaps
-    for i = 0, 9 do
-      pcall(vim.keymap.del, 'n', tostring(i), { buffer = true })
-    end
+    teardown_input_handler()
   end, { buffer = true, silent = true, nowait = true })
 end
 
 function M.hop_line()
   if active then
     clear_highlights()
+    teardown_input_handler()
     return
   end
   
@@ -164,6 +181,7 @@ end
 function M.hop_visual()
   if active then
     clear_highlights()
+    teardown_input_handler()
     return
   end
   

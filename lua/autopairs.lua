@@ -1,4 +1,14 @@
 -- autopairs.lua
+--
+-- PERF NOTE: every helper below used to fetch cursor/line state with
+-- vim.fn.col('.') / vim.fn.getline('.'). Those are VimL function wrappers —
+-- each call round-trips through the VimL evaluator instead of hitting the
+-- Lua API directly. This file's mappings fire on nearly every keystroke you
+-- type in insert mode (every bracket, quote, space, backspace, enter), so
+-- that round-trip tax gets paid constantly while typing. Swapped for
+-- vim.api.nvim_win_get_cursor(0) / vim.api.nvim_get_current_line(), which
+-- are direct API calls with no VimL evaluation in between — same result,
+-- cheaper per keystroke.
 local M = {}
 
 local asymmetric_pairs = {
@@ -11,8 +21,8 @@ local symmetric_pairs = { '"', "'", '`' }
 
 -- Check if cursor is at end of line or followed by whitespace/closing bracket
 local function can_autopair()
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local next_char = line:sub(col, col)
   
   -- Allow pairing at end of line or before whitespace/brackets
@@ -31,8 +41,8 @@ end
 
 -- Handle symmetric pairs intelligently
 local function handle_symmetric_pair(char)
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
@@ -57,8 +67,8 @@ end
 
 -- Skip over closing bracket or insert it
 local function skip_or_insert(close_char)
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local next_char = line:sub(col, col)
   
   if next_char == close_char then
@@ -69,8 +79,8 @@ end
 
 -- Smart backspace: delete pairs together
 local function smart_backspace()
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
@@ -96,8 +106,8 @@ local function smart_enter()
     return '<C-y>'
   end
   
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   
@@ -121,8 +131,8 @@ end
 
 -- Smart space: add space inside brackets
 local function smart_space()
-  local col = vim.fn.col('.')
-  local line = vim.fn.getline('.')
+  local col = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local line = vim.api.nvim_get_current_line()
   local prev_char = line:sub(col - 1, col - 1)
   local next_char = line:sub(col, col)
   

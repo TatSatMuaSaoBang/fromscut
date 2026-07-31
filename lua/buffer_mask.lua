@@ -1,25 +1,61 @@
 local M = {}
 
-local namespace = vim.api.nvim_create_namespace('buffer_mask')
 local active = false
 local mode = nil  -- 'close' or 'switch'
+-- The buffer mask mode was invoked in. Captured explicitly rather than
+-- relying on "the current buffer" at cleanup time, because switch mode
+-- calls `:buffer <target>` before clear_masks() runs — by then the current
+-- buffer has changed, so `{ buffer = true }` in clear_masks() would delete
+-- (or fail to find, silently, via pcall) mappings on the wrong buffer and
+-- leave the original buffer's digit keys stuck.
+local mask_buf = nil
+
+-- PERF NOTE: create_masked_bufferline() runs on every tabline redraw, which
+-- Neovim triggers a lot more often than "when you switch buffers" — basically
+-- any redraw cycle. It used to call vim.fn.fnamemodify() (a VimL round-trip)
+-- and vim.fn.getbufvar()/vim.fn.buflisted() (same) for every open buffer on
+-- every single one of those redraws. With more than a handful of buffers
+-- open that's real, repeated, avoidable work on a very hot path. Cached the
+-- display name per buffer below (keyed on the buffer's raw name, so a
+-- rename still invalidates it) and switched buflisted/modified lookups to
+-- the direct vim.bo[] Lua API instead of the VimL vim.fn wrappers.
+local name_cache = {}
+
+local function get_display_name(buf)
+  local raw = vim.api.nvim_buf_get_name(buf)
+  local cached = name_cache[buf]
+  if cached and cached.raw == raw then
+    return cached.display
+  end
+  local display = vim.fn.fnamemodify(raw, ':t')
+  if display == '' then display = '[No Name]' end
+  name_cache[buf] = { raw = raw, display = display }
+  return display
+end
+
+vim.api.nvim_create_autocmd({ 'BufDelete', 'BufWipeout' }, {
+  callback = function(args) name_cache[args.buf] = nil end,
+})
 
 local function clear_masks()
   vim.opt.tabline = '%!v:lua.custom_bufferline()'
   active = false
   mode = nil
   
-  -- Clean up number keymaps
-  for i = 0, 9 do
-    pcall(vim.keymap.del, 'n', tostring(i))
+  -- Clean up number keymaps on the buffer they were actually set on
+  if mask_buf then
+    for i = 0, 9 do
+      pcall(vim.keymap.del, 'n', tostring(i), { buffer = mask_buf })
+    end
+    pcall(vim.keymap.del, 'n', '<Esc>', { buffer = mask_buf })
   end
-  pcall(vim.keymap.del, 'n', '<Esc>')
+  mask_buf = nil
 end
 
 local function get_listed_buffers()
   local buffers = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.fn.buflisted(buf) == 1 then
+    if vim.bo[buf].buflisted then
       table.insert(buffers, buf)
     end
   end
@@ -36,10 +72,8 @@ local function create_masked_bufferline()
   
   local line = ""
   for idx, buf in ipairs(buffers) do
-    local name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ':t')
-    if name == '' then name = '[No Name]' end
-    
-    local modified = vim.fn.getbufvar(buf, "&modified") == 1 and ' [+]' or ''
+    local name = get_display_name(buf)
+    local modified = vim.bo[buf].modified and ' [+]' or ''
     
     -- Show mask number with highlight
     local mask = '%#BufferMask#[' .. idx .. ']%#TabLine# '
@@ -92,10 +126,19 @@ local function handle_buffer_action(num)
   clear_masks()
 end
 
+-- BUG FIX: these were plain global normal-mode mappings with no
+-- `buffer = true`. That meant that while mask mode was active, pressing a
+-- digit in *any* buffer — including after switching windows — fired a
+-- buffer close/switch action instead of behaving as a normal Vim
+-- count-prefix (e.g. `5dd`), and switching away without pressing a digit or
+-- Esc left every buffer's digit keys hijacked until mask mode was resolved.
+-- Scoping to `buffer = true` limits the hijack to the buffer where mask
+-- mode was actually invoked.
 local function setup_number_handler()
   local input = ""
   local max_buffers = #get_listed_buffers()
   local max_digits = tostring(max_buffers):len()
+  mask_buf = vim.api.nvim_get_current_buf()
   
   for i = 0, 9 do
     vim.keymap.set('n', tostring(i), function()
@@ -137,12 +180,12 @@ local function setup_number_handler()
       if not could_extend and num <= max_buffers then
         handle_buffer_action(num)
       end
-    end, { noremap = true, silent = true, nowait = true })
+    end, { buffer = mask_buf, noremap = true, silent = true, nowait = true })
   end
   
   vim.keymap.set('n', '<Esc>', function()
     clear_masks()
-  end, { noremap = true, silent = true, nowait = true })
+  end, { buffer = mask_buf, noremap = true, silent = true, nowait = true })
 end
 
 function M.close_buffer()

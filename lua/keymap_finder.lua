@@ -71,7 +71,9 @@ local function filter_keymaps()
   
   for _, km in ipairs(keymaps) do
     local searchable = (km.mode .. km.lhs .. km.rhs .. km.desc):lower()
-    if searchable:match(term) then
+    -- BUG FIX: same issue as file_finder.lua — term was a Lua pattern here,
+    -- not literal text. find(term, 1, true) forces a plain substring search.
+    if searchable:find(term, 1, true) then
       table.insert(filtered, km)
     end
   end
@@ -118,13 +120,14 @@ local function render()
   
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(buf, 'modifiable', false)
-  
-  -- Position cursor on search line
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_set_cursor(win, {2, 10 + #search_term})
-    end
-  end)
+
+  -- PERF NOTE: see file_finder.lua — vim.schedule() here deferred the
+  -- cursor move a full tick behind the keystroke that triggered it. render()
+  -- already runs synchronously inside the keymap callback, so just move the
+  -- cursor immediately instead of scheduling it.
+  if vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_win_set_cursor(win, {2, 10 + #search_term})
+  end
 end
 
 local function close_window()
